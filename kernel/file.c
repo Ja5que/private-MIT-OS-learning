@@ -12,7 +12,9 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "sysinfo.h"
 
+struct sysinfo x;
 struct devsw devsw[NDEV];
 struct {
   struct spinlock lock;
@@ -180,3 +182,12 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+uint64 filesysinfo(uint64 addr){
+  struct proc *p = myproc();
+  struct sysinfo curinfo;
+  curinfo.freemem = getfreemem();
+  curinfo.nproc = getfreeprocnum(); 
+  if(copyout(p->pagetable, addr, (char *)&curinfo, sizeof(curinfo)) < 0)
+    return -1;
+  return 0;
+}

@@ -16,6 +16,7 @@
 #include "file.h"
 #include "fcntl.h"
 
+extern uint64 filesysinfo(uint64);
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -483,4 +484,21 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+uint64
+sys_trace(void){
+  int mask;
+  if(argint(0, &mask) < 0)
+    return -1;
+  myproc()->trace_mask = mask;
+
+  return 0;
+}
+
+uint64
+sys_sysinfo(void){
+  uint64 tmpinfo; // user pointer to struct stat
+  if(argaddr(0, &tmpinfo) < 0)
+    return -1;
+  return filesysinfo(tmpinfo);
 }

@@ -12,6 +12,7 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+static int numfreeproc = NPROC;
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -81,7 +82,6 @@ allocpid() {
   pid = nextpid;
   nextpid = nextpid + 1;
   release(&pid_lock);
-
   return pid;
 }
 
@@ -126,7 +126,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  numfreeproc--;
   return p;
 }
 
@@ -150,6 +150,8 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->trace_mask = 0;
+  numfreeproc++;
 }
 
 // Create a user page table for a given process,
@@ -273,6 +275,7 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+  // children inherit trace mask from parent
   np->sz = p->sz;
 
   np->parent = p;
@@ -294,7 +297,7 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
-
+  np->trace_mask = p->trace_mask;
   release(&np->lock);
 
   return pid;
@@ -692,4 +695,15 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+uint64 getfreeprocnum(void){
+  uint64 count = 0;
+  for(int i = 0; i < NPROC; i++){
+    if(proc[i].state != UNUSED){
+      count++;
+    }
+  }
+  //printf("compare:%d %d\n", count, numfreeproc);
+  return count;
 }
