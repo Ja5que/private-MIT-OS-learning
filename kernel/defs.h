@@ -86,6 +86,8 @@ void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
 
 // proc.c
+pte_t*          walk(pagetable_t, uint64, int);
+pagetable_t     getmykpagetable(void);
 int             cpuid(void);
 void            exit(int);
 int             fork(void);
@@ -158,6 +160,11 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
+pagetable_t     getkernelpagetable(void);
+void            clearwalk(pagetable_t);
+uint64          walkaddrinkernel(uint64);
+void            vmmap(pagetable_t, uint64, uint64, uint64, int);
+void            mapkernelpagetable(pagetable_t);
 void            vmprint(pagetable_t);
 void            kvminit(void);
 void            kvminithart(void);

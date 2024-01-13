@@ -5,7 +5,6 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
 /*
  * the kernel's page table.
  */
@@ -14,6 +13,10 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+pagetable_t getkernelpagetable(){
+  return kernel_pagetable;
+}
 
 /*
  * create a direct-map page table for the kernel.
@@ -88,6 +91,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   return &pagetable[PX(0, va)];
 }
 
+
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
@@ -111,6 +115,12 @@ walkaddr(pagetable_t pagetable, uint64 va)
   return pa;
 }
 
+
+uint64
+walkaddrinkernel(uint64 va){
+  return walkaddr(kernel_pagetable,va);
+}
+
 // add a mapping to the kernel page table.
 // only used when booting.
 // does not flush TLB or enable paging.
@@ -120,6 +130,15 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
   if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
+
+// add a mapping to specific page table.
+void
+vmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
+    panic("vmmap");
+}
+
 
 // translate a kernel virtual address to
 // a physical address. only needed for
@@ -132,7 +151,7 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(getmykpagetable(), va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -205,6 +224,37 @@ uvmcreate()
     return 0;
   memset(pagetable, 0, PGSIZE);
   return pagetable;
+}
+
+//create an empty kernel page table
+//returns 0 if out of memory
+void
+mapkernelpagetable(pagetable_t pagetable)
+{
+
+  // uart registers
+  vmmap(pagetable,UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  vmmap(pagetable,VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  vmmap(pagetable,CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  vmmap(pagetable,PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  vmmap(pagetable,KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  vmmap(pagetable,(uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  vmmap(pagetable,TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  return;
 }
 
 // Load the user initcode into address 0 of pagetable,
@@ -449,13 +499,13 @@ void vmprinthandler(pagetable_t cnt,int level){
 
   for(int i=0;i<512;i++){
     pte_t pte = cnt[i];
-    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+    if((pte & PTE_V)){
       uint64 child = PTE2PA(pte);
       for(int j=1;j<=level+1;j++){
         printf("..");
-        if(j==level+1) printf("%d",i); else printf(" ");
+        if(j==level+1) printf("%d: ",i); else printf(" ");
       }
-      printf("pte %p pa %p\n",child,PTE2PA(child));
+      printf("pte %p pa %p\n",pte,PTE2PA(pte));
       vmprinthandler((pagetable_t)child,level+1);
     }
   }  
@@ -465,3 +515,22 @@ void vmprint(pagetable_t pagetable){
   vmprinthandler((pagetable_t)pagetable,0);
 };
 
+//clear the page table
+void
+clearwalkhandler(pagetable_t pagetable){
+  for(int i=0;i<512;i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);
+        clearwalkhandler((pagetable_t)child);
+      } 
+      pagetable[i] = 0;
+    }
+  }
+  kfree((void*)pagetable);
+}
+void
+clearwalk(pagetable_t pagetable){
+  clearwalkhandler(pagetable);
+}
