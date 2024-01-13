@@ -160,6 +160,7 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
+void            utkvmmap(pagetable_t, pagetable_t, uint64, uint64);
 pagetable_t     getkernelpagetable(void);
 void            clearwalk(pagetable_t);
 uint64          walkaddrinkernel(uint64);
@@ -210,6 +211,10 @@ void            statsinc(void);
 // sprintf.c
 int             snprintf(char*, int, char*, ...);
 
+//vmcopyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
+
 #ifdef LAB_NET
 // pci.c
 void            pci_init();
@@ -230,4 +235,7 @@ void            sockclose(struct sock *);
 int             sockread(struct sock *, uint64, int);
 int             sockwrite(struct sock *, uint64, int);
 void            sockrecvudp(struct mbuf*, uint32, uint16, uint16);
+
+
+
 #endif

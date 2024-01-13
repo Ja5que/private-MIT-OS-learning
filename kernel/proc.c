@@ -160,6 +160,7 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->kstack){
     pte_t *pte=walk(p->kpagetable,p->kstack,0);
+    if(pte == 0) panic("freeproc kstack");
     kfree((void*)PTE2PA(*pte));
   }
   p->kstack = 0;
@@ -228,12 +229,13 @@ kvmcreate(struct proc *p)
   if(pagetable == 0)
     return 0;
   memset(pagetable, 0, PGSIZE);
-
+  
+  mapkernelpagetable(pagetable);
   uint64 va = KSTACK((int) (p - proc));
   vmmap(pagetable,va,pa, PGSIZE, PTE_R | PTE_W);
   p->kstack = va;
 
-  mapkernelpagetable(pagetable);
+  
 
   return pagetable;
 }
@@ -273,7 +275,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-
+  utkvmmap(p->kpagetable, p->pagetable,0,p->sz);
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -296,11 +298,15 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    utkvmmap(p->kpagetable, p->pagetable,sz-n,sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // utkvmmap(p->kpagetable, p->pagetable,sz,sz-n);
   }
   p->sz = sz;
   return 0;
@@ -326,10 +332,11 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+  utkvmmap(np->kpagetable, np->pagetable,0,p->sz);
   np->sz = p->sz;
 
   np->parent = p;
-
+  
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -341,7 +348,7 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
-
+  
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -530,6 +537,7 @@ scheduler(void)
         w_satp(MAKE_SATP(p->kpagetable));
         sfence_vma();
         swtch(&c->context, &p->context);
+        kvminithart();
         // w_satp(tmp);
         // sfence_vma();
         // Process is done running for now.
