@@ -59,6 +59,20 @@ printptr(uint64 x)
     consputc(digits[x >> (sizeof(uint64) * 8 - 4)]);
 }
 
+void
+backtrace(void){
+  uint64 fp;
+  printf("backtrace:\n");
+  fp = r_fp();
+  uint64 stacktop=PGROUNDUP(fp);
+  while(fp < stacktop){
+    printf("%p\n",*((uint64*)(fp-8)));
+    // if(fp == stacktop) break; 
+    fp = *((uint64*)(fp-16));  
+  }
+  
+}
+
 // Print to the console. only understands %d, %x, %p, %s.
 void
 printf(char *fmt, ...)
@@ -121,6 +135,7 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
