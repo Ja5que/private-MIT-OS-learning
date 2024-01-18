@@ -68,16 +68,20 @@ usertrap(void)
   } else if(r_scause()==13||r_scause()==15){
     // store page fault
     uint64 addr = r_stval();
-    char *mem = kalloc();
-    if(mem == 0){
+    if(addr >= p->sz || addr< PGROUNDUP(p->trapframe->sp)){
       p->killed = 1;
     }else{
-      memset(mem, 0, PGSIZE);
-      uint64 va = PGROUNDDOWN(addr);
-      if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_X | PTE_U) != 0){
-        // printf("usertrap(): load page fault cannot map page\n");
-        kfree(mem);
+      char *mem = kalloc();
+      if(mem == 0){
         p->killed = 1;
+      }else{
+        memset(mem, 0, PGSIZE);
+        uint64 va = PGROUNDDOWN(addr);
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_X | PTE_U) != 0){
+          // printf("usertrap(): load page fault cannot map page\n");
+          kfree(mem);
+          p->killed = 1;
+        }
       }
     }
   } else if((which_dev = devintr()) != 0){

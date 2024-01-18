@@ -50,7 +50,14 @@ sys_sbrk(void)
   // if(growproc(n) < 0)
   //   return -1;
   // do not allocate actual memory
+  if(n>=0)
   myproc()->sz += n;
+  else{
+    uint64 oldsz=myproc()->sz;
+    if(myproc()->sz+n<0) return -1;
+    uvmdealloc(myproc()->pagetable,oldsz,oldsz+n);
+    myproc()->sz=oldsz+n;
+  }
   return addr;
 }
 
