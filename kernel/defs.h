@@ -65,6 +65,10 @@ void            kfree(void *);
 void            kinit(void);
 void            addpageref(int);
 void            clearpageref(int);
+int             getpageref(int);
+int             cowpage(pagetable_t, uint64);
+int             kaddrefcnt(void*);
+void*             cowalloc(pagetable_t, uint64);
 
 // log.c
 void            initlog(int, struct superblock*);
