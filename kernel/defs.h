@@ -63,12 +63,8 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
-void            addpageref(int);
+void            addpageref(void*);
 void            clearpageref(int);
-int             getpageref(int);
-int             cowpage(pagetable_t, uint64);
-int             kaddrefcnt(void*);
-void*             cowalloc(pagetable_t, uint64);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -160,8 +156,8 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
-int             pagecheck(pagetable_t, int);
-int             cowcheck(pagetable_t, int);
+int             pagecheck(pagetable_t, uint64);
+int             cowcheck(pagetable_t, uint64);
 pte_t*          resolvecowpage(pagetable_t, uint64);
 pte_t*          walk(pagetable_t, uint64, int);
 void            kvminit(void);

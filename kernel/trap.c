@@ -67,18 +67,13 @@ usertrap(void)
 
     syscall();
   }else if(r_scause() == 15||r_scause() == 13){
-    // // store page fault
-    // uint64 addr = PGROUNDDOWN(r_stval());
-    // pte_t *temppte;
-    // if(addr < p->sz && pagecheck(p->pagetable,addr) && cowcheck(p->pagetable,addr) && 
-    // (temppte = resolvecowpage(p->pagetable,addr)) != 0){
-    //   //do nothing
-    // }else p->killed = 1;
-     uint64 fault_va = r_stval();  // 获取出错的虚拟地址
-  if(fault_va >= p->sz
-    || cowpage(p->pagetable, fault_va) != 0
-    || cowalloc(p->pagetable, PGROUNDDOWN(fault_va)) == 0)
-    p->killed = 1;
+    // store page fault
+    uint64 addr = PGROUNDDOWN(r_stval());
+    pte_t *temppte;
+    if(addr < p->sz && pagecheck(p->pagetable,addr) && cowcheck(p->pagetable,addr) && 
+    (temppte = resolvecowpage(p->pagetable,addr)) != 0){
+      //do nothing
+    }else p->killed = 1;
   }else if((which_dev = devintr()) != 0){
     // ok
   } else {
