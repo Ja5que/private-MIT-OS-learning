@@ -23,10 +23,55 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct spinlock pageref_lock;
+uint64 pageref[PHYSTOP/PGSIZE];
+void clearpageref(int id){
+  acquire(&pageref_lock);
+  pageref[id] = 0;
+  release(&pageref_lock);
+}
+
+void addpageref(int id){
+  acquire(&pageref_lock);
+  pageref[id]++;
+  release(&pageref_lock);
+}
+
+int pagecheck(pagetable_t p,int va){
+  if(va >= MAXVA) return 0;
+  pte_t *pte = walk(p, va, 0);
+  if(pte == 0) return 0;
+  if((*pte & PTE_V) == 0) return 0;  
+  return 1;
+}
+int cowcheck(pagetable_t p,int va){
+  return ((*walk(p, va, 0) & PTE_C) != 0);
+}
+pte_t* resolvecowpage(pagetable_t p, uint64 va){
+  pte_t *pte = walk(p, va, 0);
+  uint flags = PTE_FLAGS(*pte);
+  flags &= ~PTE_C;
+  flags |= PTE_W;
+  flags &= ~PTE_V;
+  uint64 pa = PTE2PA(*pte);
+  char *mem = kalloc();
+  if(mem == 0) return 0;
+  
+  memmove(mem, (char*)pa, PGSIZE);
+  kfree((void*)PGROUNDDOWN(pa));
+
+  if(mappages(p, va, PGSIZE, (uint64)mem, flags) != 0) {
+    kfree(mem);
+    return 0;
+  }
+  return walk(p, va, 0);    
+}
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pageref_lock, "pageref");
+  for(int i=0;i<PHYSTOP/PGSIZE;i++) pageref[i] = 1;
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -50,16 +95,21 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+  acquire(&pageref_lock);
+  pageref[(uint64)pa/PGSIZE]--;
+  if(pageref[(uint64)pa/PGSIZE] <0) panic("kfree:ref<0!");
+  if(pageref[(uint64)pa/PGSIZE] == 0){
+    // Fill with junk to catch dangling refs.
+    memset(pa, 1, PGSIZE);
 
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
+    r = (struct run*)pa;
 
-  r = (struct run*)pa;
-
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+    acquire(&kmem.lock);
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    release(&kmem.lock);
+  }
+  release(&pageref_lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -76,7 +126,10 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    clearpageref((uint64)r/PGSIZE);
+    addpageref((uint64)r/PGSIZE);
+  }
   return (void*)r;
 }
