@@ -23,104 +23,61 @@ struct {
   struct run *freelist;
 } kmem;
 
-struct ref_stru {
-  struct spinlock lock;
-  int cnt[PHYSTOP / PGSIZE];  // 引用计数
-} ref;
 
-/**
- * @brief cowpage 判断一个页面是否为COW页面
- * @param pagetable 指定查询的页表
- * @param va 虚拟地址
- * @return 0 是 -1 不是
- */
-int cowpage(pagetable_t pagetable, uint64 va) {
-  if(va >= MAXVA)
-    return -1;
-  pte_t* pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return -1;
-  if((*pte & PTE_V) == 0)
-    return -1;
-  return (*pte & PTE_F ? 0 : -1);
+struct spinlock pageref_lock;
+uint64 pageref[PHYSTOP/PGSIZE];
+void clearpageref(int id){
+  acquire(&pageref_lock);
+  pageref[id] = 0;
+  release(&pageref_lock);
 }
 
-/**
- * @brief cowalloc copy-on-write分配器
- * @param pagetable 指定页表
- * @param va 指定的虚拟地址,必须页面对齐
- * @return 分配后va对应的物理地址，如果返回0则分配失败
- */
-void* cowalloc(pagetable_t pagetable, uint64 va) {
-  if(va % PGSIZE != 0)
+void addpageref(void *pa){
+    if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP) return;
+    acquire(&pageref_lock);
+    pageref[(uint64)pa/PGSIZE]++;
+    release(&pageref_lock);
+}
+
+
+int pagecheck(pagetable_t p,uint64 va){
+  if(va >= MAXVA) return 0;
+  pte_t *pte = walk(p, va, 0);
+  if(pte == 0) return 0;
+  if((*pte & PTE_V) == 0) return 0;  
+  return 1;
+}
+int cowcheck(pagetable_t p,uint64 va){
+  if(va >= MAXVA) return 0;
+  return ((*walk(p, va, 0) & PTE_C)  ? 1 : 0);
+}
+
+pte_t* resolvecowpage(pagetable_t p, uint64 va){
+  pte_t *pte = walk(p, va, 0);
+  uint flags = PTE_FLAGS(*pte);
+  flags &= ~PTE_C;
+  flags |= PTE_W;
+  // flags &= ~PTE_V;
+  uint64 pa = PTE2PA(*pte);
+  char *mem = kalloc();
+  if(mem == 0) return 0;
+  
+  memmove(mem, (char*)pa, PGSIZE);
+  kfree((void*)PGROUNDDOWN(pa));
+
+  if(mappages(p, va, PGSIZE, (uint64)mem, flags) != 0) {
+    kfree(mem);
     return 0;
-
-  uint64 pa = walkaddr(pagetable, va);  // 获取对应的物理地址
-  if(pa == 0)
-    return 0;
-
-  pte_t* pte = walk(pagetable, va, 0);  // 获取对应的PTE
-
-  if(krefcnt((char*)pa) == 1) {
-    // 只剩一个进程对此物理地址存在引用
-    // 则直接修改对应的PTE即可
-    *pte |= PTE_W;
-    *pte &= ~PTE_F;
-    return (void*)pa;
-  } else {
-    // 多个进程对物理内存存在引用
-    // 需要分配新的页面，并拷贝旧页面的内容
-    char* mem = kalloc();
-    if(mem == 0)
-      return 0;
-
-    // 复制旧页面内容到新页
-    memmove(mem, (char*)pa, PGSIZE);
-
-    // 清除PTE_V，否则在mappagges中会判定为remap
-    *pte &= ~PTE_V;
-
-    // 为新页面添加映射
-    if(mappages(pagetable, va, PGSIZE, (uint64)mem, (PTE_FLAGS(*pte) | PTE_W) & ~PTE_F) != 0) {
-      kfree(mem);
-      *pte |= PTE_V;
-      return 0;
-    }
-
-    // 将原来的物理内存引用计数减1
-    kfree((char*)PGROUNDDOWN(pa));
-    return mem;
   }
-}
-
-/**
- * @brief krefcnt 获取内存的引用计数
- * @param pa 指定的内存地址
- * @return 引用计数
- */
-int krefcnt(void* pa) {
-  return ref.cnt[(uint64)pa / PGSIZE];
-}
-
-/**
- * @brief kaddrefcnt 增加内存的引用计数
- * @param pa 指定的内存地址
- * @return 0:成功 -1:失败
- */
-int kaddrefcnt(void* pa) {
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
-    return -1;
-  acquire(&ref.lock);
-  ++ref.cnt[(uint64)pa / PGSIZE];
-  release(&ref.lock);
-  return 0;
+  return walk(p, va, 0);    
 }
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-    initlock(&ref.lock, "ref");
+  initlock(&pageref_lock, "pageref");
+  for(int i=0;i<PHYSTOP/PGSIZE;i++) pageref[i] = 1;
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -130,7 +87,6 @@ freerange(void *pa_start, void *pa_end)
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
-     ref.cnt[(uint64)p / PGSIZE] = 1;
     kfree(p);
   }
 }
@@ -147,25 +103,19 @@ kfree(void *pa)
   
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
-
-  // 只有当引用计数为0了才回收空间
-  // 否则只是将引用计数减1
-  acquire(&ref.lock);
-  if(--ref.cnt[(uint64)pa / PGSIZE] == 0) {
-    release(&ref.lock);
-
-    r = (struct run*)pa;
-
+  acquire(&pageref_lock);
+  pageref[(uint64)pa/PGSIZE]--;
+  if(pageref[(uint64)pa/PGSIZE] <0) panic("kfree:ref<0!");
+  if(pageref[(uint64)pa/PGSIZE] == 0){
     // Fill with junk to catch dangling refs.
     memset(pa, 1, PGSIZE);
-
+    r = (struct run*)pa;
     acquire(&kmem.lock);
     r->next = kmem.freelist;
     kmem.freelist = r;
     release(&kmem.lock);
-  } else {
-    release(&ref.lock);
   }
+  release(&pageref_lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -178,15 +128,15 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r) {
+  if(r) 
     kmem.freelist = r->next;
-    acquire(&ref.lock);
-    ref.cnt[(uint64)r / PGSIZE] = 1;  // 将引用计数初始化为1
-    release(&ref.lock);
-  }
+  
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    clearpageref((uint64)r/PGSIZE);
+    addpageref(r);
+  }
   return (void*)r;
 }

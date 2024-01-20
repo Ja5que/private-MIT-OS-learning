@@ -156,8 +156,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
-      panic("remap");
+    // if(*pte & PTE_V)
+    //   panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -308,31 +308,24 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
-    pte_t *pte;
-  uint64 pa, i;
-  uint flags;
+  pte_t *pte;
+  uint64  i;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-
-    // 仅对可写页面设置COW标记
-    if(flags & PTE_W) {
-      // 禁用写并设置COW Fork标记
-      flags = (flags | PTE_F) & ~PTE_W;
-      *pte = PA2PTE(pa) | flags;
+    if(*pte & PTE_W){
+      *pte &= ~PTE_W;
+      *pte |= PTE_C;
     }
-
-    if(mappages(new, i, PGSIZE, pa, flags) != 0) {
-      uvmunmap(new, 0, i / PGSIZE, 1);
+    uint flag = PTE_FLAGS(*pte);
+    if(mappages(new, i, PGSIZE, PTE2PA(*pte), flag) != 0){
+      uvmunmap(new, 0, i/PGSIZE, 1);
       return -1;
     }
-    // 增加内存的引用计数
-    kaddrefcnt((char*)pa);
+    addpageref((void*)PTE2PA(*pte));
   }
   return 0;
 }
@@ -357,18 +350,15 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-
+  pte_t *temppte;
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-
-    
-  // 处理COW页面的情况
-  if(cowpage(pagetable, va0) == 0) {
-    // 更换目标物理地址
-    pa0 = (uint64)cowalloc(pagetable, va0);
-  }
-
+    if(pagecheck(pagetable,va0)!=0 && cowcheck(pagetable,va0)!=0)
+    {
+      if((temppte = resolvecowpage(pagetable,va0)) == 0) return -1;
+      pa0 = PTE2PA(*temppte);
+    }
+    else pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);

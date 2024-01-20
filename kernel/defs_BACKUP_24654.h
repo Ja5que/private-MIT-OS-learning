@@ -63,8 +63,15 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+<<<<<<< HEAD
+int             kaddrefcnt(void*);
+int             krefcnt(void*);
+void*             cowalloc(pagetable_t, uint64);
+int             cowpage(pagetable_t, uint64);
+=======
 void            addpageref(void*);
 void            clearpageref(int);
+>>>>>>> cowtemp
 
 // log.c
 void            initlog(int, struct superblock*);
