@@ -31,6 +31,24 @@ barrier()
   // then increment bstate.round.
   //
   
+  // Lock the mutex
+  assert(pthread_mutex_lock(&bstate.barrier_mutex) == 0);
+  // Increment the number of threads that have reached this round of the barrier
+  bstate.nthread++;
+  // If all threads have reached this round of the barrier
+  if (bstate.nthread == nthread) {
+    // Increment the round
+    bstate.round++;
+    // Reset the number of threads that have reached this round of the barrier
+    bstate.nthread = 0;
+    // Broadcast to all threads that the barrier has been reached
+    assert(pthread_cond_broadcast(&bstate.barrier_cond) == 0);
+  } else {
+    // Wait for the broadcast
+    assert(pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex) == 0);
+  }
+  // Unlock the mutex
+  assert(pthread_mutex_unlock(&bstate.barrier_mutex) == 0);
 }
 
 static void *
